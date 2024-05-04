@@ -1,0 +1,168 @@
+desc:Blist Osc
+
+slider1:midinote=50<0,127,1>Midi Note
+slider3:maxh=1<0,1>Max Harmonics
+
+slider5:pwma=0<0,2>PWM Amount
+slider6:pwmf=1<0,16>PWM Freq
+slider10:tria=0<0,1>Tri Mix
+slider11:sqra=0<0,1>Square Mix
+
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+
+// (C) 2024 S.D.Smith - all rights reserved
+// Simple BLIT implementation
+// use it as you like!
+
+// V1.06 - Pretty ropey OSC graphing
+// will try and center on the OSC if possible!
+
+// V1.05 - LPF all the params that cause popping/cracking
+// issues
+
+// V1.04 - added max Harmonics
+// pretty awful - really messes up the intergation
+
+// V1.03 - sliders for SQR/TRI mix and PWM amount/freq
+// *note* any realtime changes really need to be 
+// smoothed/low pass filtered else the integration
+// will mess up, tho it will eventually recover thx to the
+// HP filters
+
+// V1.02 - Added Triangle and better coeffs
+
+// V1.01 - Added Square
+
+// V1.00 - basic BLIT
+
+// are all parameter smoothed with a 1st order IIR filter
+// ParameterSmoothing = filter coeff
+// amaxh = actual max harmonics
+// apwma = actual PWM amount
+// atria = actual Triangle Mix Amount
+// aspra = actual Square Mix Amount
+// afreq = actual note freq
+
+// All BLSincSpikes are Highpasssed with a 1st order IIR
+// to remove DC
+
+// t = period time 0-1
+// fr = note frequency in HZ
+// mh = integer max harmonics
+// srate = system samplerate
+
+function BLSincSpike(t,fr,mh)
+(
+t = t-floor(t);
+p = (mh)*srate / fr;
+p<2? p=2;
+m = 2 * floor( p * .5 ) + 1;
+(p/m) * sin($pi*t*m) / (m*sin( $pi*t ))*max(0.005,mh);
+);
+
+
+OscGraph=0;
+OscGP=0;
+@sample
+  // Should really Time Constant this for consistency at different sample rate
+  ParameterSmoothing=0.001;
+  // Midi note to actual freq
+  freq=(440/32)*pow(2,(midinote-9)/12);
+  // LPF these parameters - cause lots of problems 
+  // with fast changes and the integrator  
+  amaxh+=(maxh-amaxh)*ParameterSmoothing;
+  apwma+=(pwma-apwma)*ParameterSmoothing;
+  atria+=(tria-atria)*ParameterSmoothing;
+  asqra+=(sqra-asqra)*ParameterSmoothing; 
+  afreq+=(freq-afreq)*ParameterSmoothing;
+  // Update freq
+  t+=afreq/srate;
+  t>1? ( t-=1; gp=OscGP;); // GP for graphing
+  
+  // Use the same coeff for leaking on the HP damping
+  // much more stable on low freq saws
+  // change 2 to 8 or more for more "Square" 
+  // square waves and betterer saws
+  // at the expense of DC jitter (in-audible)
+  DCLeak=tan(afreq/(2*$pi*srate));
+
+  // some sorry ass PWM
+  // Saw = vibrato since it's changing phase
+  // Square = PWM
+  // Tri = Tri->Saw morph (this sounds like
+  // the reece bass on Usual suspects - holepunch!!!)
+
+  Duty=cos(pwmtime*2*$pi)*apwma+0.5;
+  pwmtime+=pwmf/srate;
+
+  // Create first sawtooth - also has Duty phase
+  bl+=BLSincSpike(t+duty,afreq,amaxh);
+  // Leaky Integrate
+  bl*=1-DCLeak;
+  // Remove DC with hi pass
+  lp+=(bl-lp)*DCLeak;
+  out=bl-lp; 
+  // Create Second sawtooth
+  bl1+=-BLSincSpike(t,afreq,amaxh);
+  // Leaky Integrate
+  bl1*=1-DCLeak;
+  // Remove DC with hi pass
+  lp1+=(bl1-lp1)*DCLeak;
+  // Add to first saw tooth for a square
+  out+=asqra*(bl1-lp1);  
+
+  // Integrate to get a triangle
+  // it's a Pretty sloppy triangle tho 
+  // totally unstable at low freqs
+  // and fast freq changes!
+  tri+=out;
+  // Leaky Integrate
+  tri*=1-DCLeak;
+  // Fix up amplitude from triangle
+  out+=atria*tri*0.01525;
+ // out*=0.5*(1-atria*0.707);
+  // store the output for Graphing
+  OscGraph[OscGP]=out;
+  OscGP+=1;
+  OscGP>=16384? OscGP=0;
+  // Output to plugin
+  spl0 = out;
+  spl1 = out;
+
+@gfx
+
+// calculate the Pixel Width of 1 cycle
+cpw=(srate/afreq) & 0xffff;
+ciw=(gfx_w/cpw) & 0xffff;
+
+gfx_set(0,0,1,0.9);
+gfx_line(gfx_w/2,0,gfx_w/2,gfx_h);
+
+sx=0;
+while (sx<gfx_w)
+  (
+  // try and center the waveform
+  // since we use integrators/pwm and graph delay line e.t.c.
+  // it'll be all over the shop
+  gsp=((sx+gp+16384)-gfx_w/2-(ciw*cpw))%16384;
+  // Get current graph value
+  cv=OscGraph[gsp]*gfx_h/2;
+  // Draw Solid area
+  gfx_set(0.5,0.0,1,0.5);
+  gfx_line(sx,gfx_h/2,sx,gfx_h/2+cv,1);
+  // Draw waveform outline`
+  gfx_set(1,1,1,1);
+  gfx_line(sx-1,gfx_h/2+lv,sx,gfx_h/2+cv,1);
+  // set the previous value to current value
+  lv=cv;
+  sx+=1;
+  );
+  
+
+
