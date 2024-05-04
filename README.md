@@ -1,6 +1,6 @@
 Blit Osc
 
-based on this paper
+using reapers JSFX and it's a simple implementation based on this paper:
 
 https://ccrma.stanford.edu/~stilti/papers/blit.pdf
 
